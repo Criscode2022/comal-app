@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  COOK
+  OPERATOR
+  ADMIN
+}
+
+enum KitchenStatus {
+  DRAFT
+  PUBLISHED
+  SUSPENDED
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum MembershipPlan {
+  NONE
+  BASE
+  PRO
+}
+
+enum MembershipStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  phone        String?
+  role         UserRole  @default(COOK)
+  locale       String    @default("es-ES")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  ownedKitchens Kitchen[]    @relation("KitchenOwner")
+  bookings      Booking[]    @relation("CookBookings")
+  membership    Membership?
+  staffOf       KitchenStaff[]
+
+  @@map("users")
+}
+
+model Kitchen {
+  id                  String        @id @default(uuid()) @db.Uuid
+  slug                String        @unique
+  name                String
+  description         String
+  addressLine         String        @map("address_line")
+  city                String
+  postal              String
+  country             String        @default("ES")
+  lat                 Decimal?      @db.Decimal(10, 7)
+  lng                 Decimal?      @db.Decimal(10, 7)
+  timezone            String        @default("Europe/Madrid")
+  basePriceCents      Int           @map("base_price_cents")
+  minHours            Int           @default(2) @map("min_hours")
+  cancellationPolicy  Json          @map("cancellation_policy")
+  status              KitchenStatus @default(PUBLISHED)
+  verified            Boolean       @default(false)
+  ratingAvg           Decimal       @default(0) @map("rating_avg") @db.Decimal(3, 2)
+  reviewCount         Int           @default(0) @map("review_count")
+  ownerUserId         String        @map("owner_user_id") @db.Uuid
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  owner      User              @relation("KitchenOwner", fields: [ownerUserId], references: [id])
+  stations   Station[]
+  equipment  KitchenEquipment[]
+  staff      KitchenStaff[]
+
+  @@index([city, status])
+  @@map("kitchens")
+}
+
+model Station {
+  id            String  @id @default(uuid()) @db.Uuid
+  kitchenId     String  @map("kitchen_id") @db.Uuid
+  name          String
+  capacityNotes String? @map("capacity_notes")
+  isActive      Boolean @default(true) @map("is_active")
+  priceCents    Int?    @map("price_cents")
+
+  kitchen  Kitchen   @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+  blocks   StationBlock[]
+
+  @@map("stations")
+}
+
+model Equipment {
+  id      String @id @default(uuid()) @db.Uuid
+  code    String @unique
+  labelEs String @map("label_es")
+
+  kitchens KitchenEquipment[]
+
+  @@map("equipment")
+}
+
+model KitchenEquipment {
+  kitchenId   String @map("kitchen_id") @db.Uuid
+  equipmentId String @map("equipment_id") @db.Uuid
+
+  kitchen   Kitchen   @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
+  equipment Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@id([kitchenId, equipmentId])
+  @@map("kitchen_equipment")
+}
+
+model KitchenStaff {
+  kitchenId String   @map("kitchen_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String   @default("manager")
+
+  kitchen Kitchen @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([kitchenId, userId])
+  @@map("kitchen_staff")
+}
+
+model StationBlock {
+  id        String   @id @default(uuid()) @db.Uuid
+  stationId String   @map("station_id") @db.Uuid
+  startsAt  DateTime @map("starts_at")
+  endsAt    DateTime @map("ends_at")
+  reason    String?
+
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@index([stationId, startsAt, endsAt])
+  @@map("station_blocks")
+}
+
+model Booking {
+  id             String        @id @default(uuid()) @db.Uuid
+  publicCode     String        @unique @map("public_code")
+  cookUserId     String        @map("cook_user_id") @db.Uuid
+  stationId      String        @map("station_id") @db.Uuid
+  startsAt       DateTime      @map("starts_at")
+  endsAt         DateTime      @map("ends_at")
+  status         BookingStatus @default(CONFIRMED)
+  priceBreakdown Json          @map("price_breakdown")
+  totalCents     Int           @map("total_cents")
+  currency       String        @default("EUR") @db.Char(3)
+  holdExpiresAt  DateTime?     @map("hold_expires_at")
+  cancelledAt    DateTime?     @map("cancelled_at")
+  accessPin      String        @map("access_pin")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  cook    User     @relation("CookBookings", fields: [cookUserId], references: [id])
+  station Station  @relation(fields: [stationId], references: [id])
+  checkIn CheckIn?
+
+  @@index([cookUserId, startsAt])
+  @@index([stationId, startsAt, endsAt])
+  @@map("bookings")
+}
+
+model CheckIn {
+  id           String   @id @default(uuid()) @db.Uuid
+  bookingId    String   @unique @map("booking_id") @db.Uuid
+  method       String   @default("pin")
+  checkedInAt  DateTime @default(now()) @map("checked_in_at")
+  checkedInBy  String?  @map("checked_in_by")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("check_ins")
+}
+
+model Membership {
+  id                   String           @id @default(uuid()) @db.Uuid
+  userId               String           @unique @map("user_id") @db.Uuid
+  plan                 MembershipPlan   @default(NONE)
+  status               MembershipStatus @default(ACTIVE)
+  currentPeriodEnd     DateTime?        @map("current_period_end")
+  stripeSubscriptionId String?          @map("stripe_subscription_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("memberships")
+}
